@@ -2952,7 +2952,6 @@ bool Tracking::TrackLocalMap()
     // We have an estimation of the camera pose and some map points tracked in the frame.
     // We retrieve the local map and try to find matches to points in the local map.
     mTrackedFr++;
-
     UpdateLocalMap();
     SearchLocalPoints();
 

@@ -89,7 +89,7 @@ public:
 
     //MapCylinder
     std::vector<MapCylinder*> GetAllCylinders();
-    MapCylinder* GetCandidateCylinder();
+    MapCylinder* GetCandidateCylinder(KeyFrame* curKF);
     MapCylinder* GetCurCylinder();
     void AddMapCylinder(MapCylinder* pCy);
     void EraseMapCylinder(MapCylinder* pCy);

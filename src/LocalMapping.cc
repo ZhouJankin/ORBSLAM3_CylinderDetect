@@ -151,12 +151,6 @@ void LocalMapping::Run()
                     }
                     else
                     {
-                        //TODO 开始检查关键帧位置，进行PCA
-                        //拿15帧共视关键帧为Cylinder设置初值
-                        vector<KeyFrame*> vpNeighKFs = mpCurrentKeyFrame->GetBestCovisibilityKeyFrames(15);
-                        //TODO 是在这里新建圆柱吗？
-                        shared_ptr<MapCylinder> Cy_ptr = make_shared<MapCylinder>(mpCurrentKeyFrame->GetMap());
-                        Cy_ptr->cyPreparation(vpNeighKFs);
                         Optimizer::LocalBundleAdjustment(mpCurrentKeyFrame,&mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA);
                         b_doneLBA = true;
                     }
@@ -436,6 +430,7 @@ void LocalMapping::CreateNewMapPoints()
     int countStereoGoodProj = 0;
     int countStereoAttempt = 0;
     int totalStereoPts = 0;
+    float Cylinder_Point_THRESHOLD = 0.5;
     // Search matches with epipolar restriction and triangulate
     for(size_t i=0; i<vpNeighKFs.size(); i++)
     {
@@ -486,17 +481,23 @@ void LocalMapping::CreateNewMapPoints()
 
 
         //TODO 得到两帧匹配的特征点后，开始利用圆柱方法进行三角化
-
+        MapCylinder* Cy = mpCurrentKeyFrame->GetMap()->GetCurCylinder();
 
 
 
         // Triangulate each match
         const int nmatches = vMatchedIndices.size();
+        vector<int> CylinderPoint_Index;
+        vector<Eigen::Vector3f> CylinderPoint;
+        int countGoodmathes = 0;    //统计正常三角化过程中成功三角化的点
         for(int ikp=0; ikp<nmatches; ikp++)
         {
+            // 当前匹配对在当前关键帧中的索引
             const int &idx1 = vMatchedIndices[ikp].first;
+            //当前匹配对在相邻关键帧中的索引
             const int &idx2 = vMatchedIndices[ikp].second;
 
+            // 当前匹配在当前关键帧中的特征点
             const cv::KeyPoint &kp1 = (mpCurrentKeyFrame -> NLeft == -1) ? mpCurrentKeyFrame->mvKeysUn[idx1]
                                                                          : (idx1 < mpCurrentKeyFrame -> NLeft) ? mpCurrentKeyFrame -> mvKeys[idx1]
                                                                                                                : mpCurrentKeyFrame -> mvKeysRight[idx1 - mpCurrentKeyFrame -> NLeft];
@@ -513,6 +514,8 @@ void LocalMapping::CreateNewMapPoints()
             bool bStereo2 = (!pKF2->mpCamera2 && kp2_ur>=0);
             const bool bRight2 = (pKF2 -> NLeft == -1 || idx2 < pKF2 -> NLeft) ? false
                                                                                : true;
+
+            
 
             if(mpCurrentKeyFrame->mpCamera2 && pKF2->mpCamera2){
                 if(bRight1 && bRight2){
@@ -566,10 +569,12 @@ void LocalMapping::CreateNewMapPoints()
                 tcw2 = sophTcw2.translation();
             }
 
+            //pCamera1和2分别为两帧的相机坐标系表示
             // Check parallax between rays
+            // 特征点反投影,其实得到的是在各自相机坐标系下的一个非归一化的方向向量,和这个点的反投影射线重合
             Eigen::Vector3f xn1 = pCamera1->unprojectEig(kp1.pt);
             Eigen::Vector3f xn2 = pCamera2->unprojectEig(kp2.pt);
-
+            //射线转换为世界坐标系
             Eigen::Vector3f ray1 = Rwc1 * xn1;
             Eigen::Vector3f ray2 = Rwc2 * xn2;
             const float cosParallaxRays = ray1.dot(ray2)/(ray1.norm() * ray2.norm());
@@ -593,7 +598,53 @@ void LocalMapping::CreateNewMapPoints()
             bool bPointStereo = false;
             if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 ||
                                                                           (cosParallaxRays<0.9996 && mbInertial) || (cosParallaxRays<0.9998 && !mbInertial)))
-            {
+            {   
+                //如果有活跃的圆柱 用圆柱方法三角化
+                if(Cy != NULL && Cy->bActive) {
+                    //找到圆柱表面上的3D点：将相机光心和射线转换到圆柱坐标系，压到z轴垂直的平面，
+                    //BUG
+                    Eigen::Vector3f KF1center = mpCurrentKeyFrame->GetCameraCenter();
+                    KF1center = Cy->GetTcyw() * KF1center;  //转换到圆柱坐标系
+                    //射线转换为圆柱坐标系
+                    Eigen::Vector3f ray1_cy = Cy->GetSO3Para().matrix().cast<float>() * ray1;
+                    //center_cy.x + alpha * ray_cy.x = X;  X^2 + Y^2 = R^2;
+                    //y = kx + b;
+                    float x, y;
+                    float k = ray1_cy[1] / ray1_cy[0];
+                    float b = KF1center[1] - k * KF1center[0];
+                    float r = Cy->GetCyr();
+                    float del = 4 * pow((k*b), 2) - 4 * (1 + k*k) * (pow(b, 2) - r * r);
+                    float tmp = 2 * (k * b);
+                    x = (-tmp + sqrt(del)) / (2 * (1 + k*k));
+                    if( (x - KF1center[0]) * ray1_cy[0] < 0) x = (-tmp - sqrt(del)) / (2 * (1 + k*k));
+                    y = k * x + b;
+                    float z = (x - KF1center[0]) * ray1_cy[2] / ray1_cy[0] + KF1center[2];
+                    //得到圆柱面交点在圆柱坐标系下
+                    Eigen::Vector3f Point_cy;
+                    Point_cy << x, y, z;
+
+                    //转为世界坐标系
+                    Eigen::Vector3f Point_w = Cy->GetTcyw().inverse() * Point_cy; 
+
+                    //投影到临近帧
+                    Eigen::Vector3f Point_c2 = pKF2->GetPose() * Point_w;
+                    Eigen:: Vector2f Point_uv2 = pCamera2->project(Point_c2);
+                    //计算重投影误差
+                    float errX2 = Point_uv2[0] - kp2.pt.x;
+                    float errY2 = Point_uv2[1] - kp2.pt.y;
+                    float REPROJ_ERR_THRESH = pKF2->mvLevelSigma2[kp2.octave];
+                    if( (errX2 * errX2 + errY2 * errY2) < 5.991 * REPROJ_ERR_THRESH) {
+                        goodProj = true;       //置为true后，符合圆柱点的这些地图点不进行正常三角化点的筛选
+                        //圆柱点的要求比较松散，不要筛查那么多步骤直接记录下来
+                        x3D = Point_w;
+                        CylinderPoint_Index.push_back(ikp);
+                        CylinderPoint.push_back(x3D);
+                        continue;
+                    }
+                }
+                //符合圆柱点的这些地图点不进行正常三角化点的筛选
+                if(goodProj) continue;
+                //正常的三角化方法
                 goodProj = GeometricTools::Triangulate(xn1, xn2, eigTcw1, eigTcw2, x3D);
                 if(!goodProj)
                     continue;
@@ -719,6 +770,279 @@ void LocalMapping::CreateNewMapPoints()
 
             mpAtlas->AddMapPoint(pMP);
             mlpRecentAddedMapPoints.push_back(pMP);
+            countGoodmathes++;
+        }
+        //判断圆柱点占成功的点的占比
+        std::cout<<"新建圆柱点数量"<<CylinderPoint_Index.size()<<std::endl;
+        std::cout<<"正常三角化地图点数量"<<countGoodmathes<<std::endl;
+        std::cout<<"圆柱点与其他三角化成功的点的占比"<< 1.0 * CylinderPoint_Index.size() / (countGoodmathes+CylinderPoint_Index.size())<<std::endl;
+        if(1.0 * CylinderPoint_Index.size() / (countGoodmathes+CylinderPoint_Index.size()) > Cylinder_Point_THRESHOLD) {
+            for(int i = 0; i < CylinderPoint_Index.size(); i++) {
+                int ikp = CylinderPoint_Index[i];
+                const int &idx1 = vMatchedIndices[ikp].first;
+                //当前匹配对在相邻关键帧中的索引
+                const int &idx2 = vMatchedIndices[ikp].second;
+                Eigen::Vector3f x3D = CylinderPoint[i];
+                MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame, mpAtlas->GetCurrentMap());
+                pMP->AddObservation(mpCurrentKeyFrame,idx1);
+                pMP->AddObservation(pKF2,idx2);
+                pMP->SetCylinder(Cy);
+
+                mpCurrentKeyFrame->AddMapPoint(pMP,idx1);
+                pKF2->AddMapPoint(pMP,idx2);
+
+                pMP->ComputeDistinctiveDescriptors();
+
+                pMP->UpdateNormalAndDepth();
+
+                mpAtlas->AddMapPoint(pMP);
+                mlpRecentAddedMapPoints.push_back(pMP);
+                mpCurrentKeyFrame->AddMapCylinder(Cy);
+
+                Cy->AddCylindricalKF(mpCurrentKeyFrame);
+                Cy->AddCyMapPoint(pMP);
+            }
+            //TODO 更新圆柱起点终点
+        }
+        else {
+            if(countGoodmathes > 15)
+            Cy->bActive = false;
+            //用正常方法三角化
+            for(int i = 0; i < CylinderPoint_Index.size(); i++) {
+                int ikp = CylinderPoint_Index[i];
+                // 当前匹配对在当前关键帧中的索引
+                const int &idx1 = vMatchedIndices[ikp].first;
+                //当前匹配对在相邻关键帧中的索引
+                const int &idx2 = vMatchedIndices[ikp].second;
+
+                // 当前匹配在当前关键帧中的特征点
+                const cv::KeyPoint &kp1 = (mpCurrentKeyFrame -> NLeft == -1) ? mpCurrentKeyFrame->mvKeysUn[idx1]
+                                                                            : (idx1 < mpCurrentKeyFrame -> NLeft) ? mpCurrentKeyFrame -> mvKeys[idx1]
+                                                                                                                : mpCurrentKeyFrame -> mvKeysRight[idx1 - mpCurrentKeyFrame -> NLeft];
+                const float kp1_ur=mpCurrentKeyFrame->mvuRight[idx1];
+                bool bStereo1 = (!mpCurrentKeyFrame->mpCamera2 && kp1_ur>=0);
+                const bool bRight1 = (mpCurrentKeyFrame -> NLeft == -1 || idx1 < mpCurrentKeyFrame -> NLeft) ? false
+                                                                                                            : true;
+
+                const cv::KeyPoint &kp2 = (pKF2 -> NLeft == -1) ? pKF2->mvKeysUn[idx2]
+                                                                : (idx2 < pKF2 -> NLeft) ? pKF2 -> mvKeys[idx2]
+                                                                                        : pKF2 -> mvKeysRight[idx2 - pKF2 -> NLeft];
+
+                const float kp2_ur = pKF2->mvuRight[idx2];
+                bool bStereo2 = (!pKF2->mpCamera2 && kp2_ur>=0);
+                const bool bRight2 = (pKF2 -> NLeft == -1 || idx2 < pKF2 -> NLeft) ? false
+                                                                                : true;
+
+                
+
+                if(mpCurrentKeyFrame->mpCamera2 && pKF2->mpCamera2){
+                    if(bRight1 && bRight2){
+                        sophTcw1 = mpCurrentKeyFrame->GetRightPose();
+                        Ow1 = mpCurrentKeyFrame->GetRightCameraCenter();
+
+                        sophTcw2 = pKF2->GetRightPose();
+                        Ow2 = pKF2->GetRightCameraCenter();
+
+                        pCamera1 = mpCurrentKeyFrame->mpCamera2;
+                        pCamera2 = pKF2->mpCamera2;
+                    }
+                    else if(bRight1 && !bRight2){
+                        sophTcw1 = mpCurrentKeyFrame->GetRightPose();
+                        Ow1 = mpCurrentKeyFrame->GetRightCameraCenter();
+
+                        sophTcw2 = pKF2->GetPose();
+                        Ow2 = pKF2->GetCameraCenter();
+
+                        pCamera1 = mpCurrentKeyFrame->mpCamera2;
+                        pCamera2 = pKF2->mpCamera;
+                    }
+                    else if(!bRight1 && bRight2){
+                        sophTcw1 = mpCurrentKeyFrame->GetPose();
+                        Ow1 = mpCurrentKeyFrame->GetCameraCenter();
+
+                        sophTcw2 = pKF2->GetRightPose();
+                        Ow2 = pKF2->GetRightCameraCenter();
+
+                        pCamera1 = mpCurrentKeyFrame->mpCamera;
+                        pCamera2 = pKF2->mpCamera2;
+                    }
+                    else{
+                        sophTcw1 = mpCurrentKeyFrame->GetPose();
+                        Ow1 = mpCurrentKeyFrame->GetCameraCenter();
+
+                        sophTcw2 = pKF2->GetPose();
+                        Ow2 = pKF2->GetCameraCenter();
+
+                        pCamera1 = mpCurrentKeyFrame->mpCamera;
+                        pCamera2 = pKF2->mpCamera;
+                    }
+                    eigTcw1 = sophTcw1.matrix3x4();
+                    Rcw1 = eigTcw1.block<3,3>(0,0);
+                    Rwc1 = Rcw1.transpose();
+                    tcw1 = sophTcw1.translation();
+
+                    eigTcw2 = sophTcw2.matrix3x4();
+                    Rcw2 = eigTcw2.block<3,3>(0,0);
+                    Rwc2 = Rcw2.transpose();
+                    tcw2 = sophTcw2.translation();
+                }
+
+                //pCamera1和2分别为两帧的相机坐标系表示
+                // Check parallax between rays
+                // 特征点反投影,其实得到的是在各自相机坐标系下的一个非归一化的方向向量,和这个点的反投影射线重合
+                Eigen::Vector3f xn1 = pCamera1->unprojectEig(kp1.pt);
+                Eigen::Vector3f xn2 = pCamera2->unprojectEig(kp2.pt);
+                //射线转换为世界坐标系
+                Eigen::Vector3f ray1 = Rwc1 * xn1;
+                Eigen::Vector3f ray2 = Rwc2 * xn2;
+                const float cosParallaxRays = ray1.dot(ray2)/(ray1.norm() * ray2.norm());
+
+                float cosParallaxStereo = cosParallaxRays+1;
+                float cosParallaxStereo1 = cosParallaxStereo;
+                float cosParallaxStereo2 = cosParallaxStereo;
+
+                if(bStereo1)
+                    cosParallaxStereo1 = cos(2*atan2(mpCurrentKeyFrame->mb/2,mpCurrentKeyFrame->mvDepth[idx1]));
+                else if(bStereo2)
+                    cosParallaxStereo2 = cos(2*atan2(pKF2->mb/2,pKF2->mvDepth[idx2]));
+
+                if (bStereo1 || bStereo2) totalStereoPts++;
+                
+                cosParallaxStereo = min(cosParallaxStereo1,cosParallaxStereo2);
+
+                Eigen::Vector3f x3D;
+
+                bool goodProj = false;
+                bool bPointStereo = false;
+                if(cosParallaxRays<cosParallaxStereo && cosParallaxRays>0 && (bStereo1 || bStereo2 ||
+                                                                            (cosParallaxRays<0.9996 && mbInertial) || (cosParallaxRays<0.9998 && !mbInertial)))
+                {
+                    goodProj = GeometricTools::Triangulate(xn1, xn2, eigTcw1, eigTcw2, x3D);
+                    if(!goodProj)
+                        continue;
+                }
+                else if(bStereo1 && cosParallaxStereo1<cosParallaxStereo2)
+                {
+                    countStereoAttempt++;
+                    bPointStereo = true;
+                    goodProj = mpCurrentKeyFrame->UnprojectStereo(idx1, x3D);
+                }
+                else if(bStereo2 && cosParallaxStereo2<cosParallaxStereo1)
+                {
+                    countStereoAttempt++;
+                    bPointStereo = true;
+                    goodProj = pKF2->UnprojectStereo(idx2, x3D);
+                }
+                else
+                {
+                    continue; //No stereo and very low parallax
+                }
+
+                if(goodProj && bPointStereo)
+                    countStereoGoodProj++;
+
+                if(!goodProj)
+                    continue;
+
+                //Check triangulation in front of cameras
+                float z1 = Rcw1.row(2).dot(x3D) + tcw1(2);
+                if(z1<=0)
+                    continue;
+
+                float z2 = Rcw2.row(2).dot(x3D) + tcw2(2);
+                if(z2<=0)
+                    continue;
+
+                //Check reprojection error in first keyframe
+                const float &sigmaSquare1 = mpCurrentKeyFrame->mvLevelSigma2[kp1.octave];
+                const float x1 = Rcw1.row(0).dot(x3D)+tcw1(0);
+                const float y1 = Rcw1.row(1).dot(x3D)+tcw1(1);
+                const float invz1 = 1.0/z1;
+
+                if(!bStereo1)
+                {
+                    cv::Point2f uv1 = pCamera1->project(cv::Point3f(x1,y1,z1));
+                    float errX1 = uv1.x - kp1.pt.x;
+                    float errY1 = uv1.y - kp1.pt.y;
+
+                    if((errX1*errX1+errY1*errY1)>5.991*sigmaSquare1)
+                        continue;
+
+                }
+                else
+                {
+                    float u1 = fx1*x1*invz1+cx1;
+                    float u1_r = u1 - mpCurrentKeyFrame->mbf*invz1;
+                    float v1 = fy1*y1*invz1+cy1;
+                    float errX1 = u1 - kp1.pt.x;
+                    float errY1 = v1 - kp1.pt.y;
+                    float errX1_r = u1_r - kp1_ur;
+                    if((errX1*errX1+errY1*errY1+errX1_r*errX1_r)>7.8*sigmaSquare1)
+                        continue;
+                }
+
+                //Check reprojection error in second keyframe
+                const float sigmaSquare2 = pKF2->mvLevelSigma2[kp2.octave];
+                const float x2 = Rcw2.row(0).dot(x3D)+tcw2(0);
+                const float y2 = Rcw2.row(1).dot(x3D)+tcw2(1);
+                const float invz2 = 1.0/z2;
+                if(!bStereo2)
+                {
+                    cv::Point2f uv2 = pCamera2->project(cv::Point3f(x2,y2,z2));
+                    float errX2 = uv2.x - kp2.pt.x;
+                    float errY2 = uv2.y - kp2.pt.y;
+                    if((errX2*errX2+errY2*errY2)>5.991*sigmaSquare2)
+                        continue;
+                }
+                else
+                {
+                    float u2 = fx2*x2*invz2+cx2;
+                    float u2_r = u2 - mpCurrentKeyFrame->mbf*invz2;
+                    float v2 = fy2*y2*invz2+cy2;
+                    float errX2 = u2 - kp2.pt.x;
+                    float errY2 = v2 - kp2.pt.y;
+                    float errX2_r = u2_r - kp2_ur;
+                    if((errX2*errX2+errY2*errY2+errX2_r*errX2_r)>7.8*sigmaSquare2)
+                        continue;
+                }
+
+                //Check scale consistency
+                Eigen::Vector3f normal1 = x3D - Ow1;
+                float dist1 = normal1.norm();
+
+                Eigen::Vector3f normal2 = x3D - Ow2;
+                float dist2 = normal2.norm();
+
+                if(dist1==0 || dist2==0)
+                    continue;
+
+                if(mbFarPoints && (dist1>=mThFarPoints||dist2>=mThFarPoints)) // MODIFICATION
+                    continue;
+
+                const float ratioDist = dist2/dist1;
+                const float ratioOctave = mpCurrentKeyFrame->mvScaleFactors[kp1.octave]/pKF2->mvScaleFactors[kp2.octave];
+
+                if(ratioDist*ratioFactor<ratioOctave || ratioDist>ratioOctave*ratioFactor)
+                    continue;
+
+                // Triangulation is succesfull
+                MapPoint* pMP = new MapPoint(x3D, mpCurrentKeyFrame, mpAtlas->GetCurrentMap());
+                if (bPointStereo)
+                    countStereo++;
+                
+                pMP->AddObservation(mpCurrentKeyFrame,idx1);
+                pMP->AddObservation(pKF2,idx2);
+
+                mpCurrentKeyFrame->AddMapPoint(pMP,idx1);
+                pKF2->AddMapPoint(pMP,idx2);
+
+                pMP->ComputeDistinctiveDescriptors();
+
+                pMP->UpdateNormalAndDepth();
+
+                mpAtlas->AddMapPoint(pMP);
+                mlpRecentAddedMapPoints.push_back(pMP);
+            }
         }
     }    
 }

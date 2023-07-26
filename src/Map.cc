@@ -184,9 +184,15 @@ vector<MapCylinder*> Map::GetAllCylinders() {
 }
 
 //在第一次估计或错误估计放弃圆柱时，用该函数得到一个新/备选圆柱
-MapCylinder* Map::GetCandidateCylinder() {
-    //TODO 这里的初始化参数给什么？PCA应该用在这里吧 cyPreparation
-    mpCurCylinder = new MapCylinder(this);
+MapCylinder* Map::GetCandidateCylinder(KeyFrame* curKF) {
+    unique_lock<mutex> lock(mMutexMap);
+    if(mpCurCylinder == NULL || mpCurCylinder->bBuilt == false) {
+        mpCurCylinder = new MapCylinder(this);
+        mpCurCylinder->bBuilt = true;
+    }
+    
+    // curKF->AddMapCylinder(mpCurCylinder);
+    return mpCurCylinder;
 }
 
 //得是当前圆柱继续添加圆柱点（圆柱延续） 要.h里新建一个curCylinder?

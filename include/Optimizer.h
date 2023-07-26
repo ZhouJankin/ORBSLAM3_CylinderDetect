@@ -60,6 +60,12 @@ public:
         qx = data_addr[3];
         r = data_addr[4];
     }
+
+    CylinderIntrinsics(const Sophus::SO3d &SO3, const double &Qx, const double &Cyr) {
+        rotation = SO3;
+        qx = Qx;
+        r = Cyr;
+    }
     //返回估计值
     // Eigen::Matrix<double,5,1> estimate() {
     //     Eigen::Matrix<double, 5, 1> data_addr;
@@ -115,11 +121,11 @@ public:
 
     // Local BA in welding area when two maps are merged
     void static LocalBundleAdjustment(KeyFrame* pMainKF,vector<KeyFrame*> vpAdjustKF, vector<KeyFrame*> vpFixedKF, bool *pbStopFlag);
-    static std::vector<double> computeDistance(const std::vector<Eigen::Vector3d> &noisyLandmarks, CylinderIntrinsics abc);
+    static std::vector<double> computeDistance(const std::vector<Eigen::Vector3d> &noisyLandmarks, const CylinderIntrinsics &abc);
     static double computeMean(const std::vector<double> &dists, const std::vector<bool> &isOuter, int InnerNum);
     static double computeStdDev(const std::vector<double> &dists, double mean, const std::vector<bool> &isOuter, int InnerNum);
     void static OptimizeOnce(std::vector<Eigen::Vector3d> &noisyLandmarks, std::vector<bool> OuterIndex, CylinderIntrinsics &abc);
-    static bool LoopOptimization(std::vector<Eigen::Vector3d> &noisyLandmarks, CylinderIntrinsics &abc);
+    static bool LoopOptimization(std::list<MapPoint*> &lpPastMapPoints, MapCylinder* pCy);
 
     // Marginalize block element (start:end,start:end). Perform Schur complement.
     // Marginalized elements are filled with zeros.
@@ -131,11 +137,11 @@ public:
     void static InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &scale);
 
 
-    static CylinderIntrinsics mCyVar;
+    // static CylinderIntrinsics mCyVar;
     static bool mbCyVar;
     static std::set<MapPoint*> msUsedPoints;
     static std::list<MapPoint*> mlLastLocalBAPoints;
-    static std::vector<Eigen::Vector3d> mvLandMarks;
+    //static std::vector<Eigen::Vector3d> mvLandMarks;
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 };

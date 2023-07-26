@@ -175,6 +175,67 @@ void MapDrawer::DrawMapPoints()
     glEnd();
 }
 
+void MapDrawer::DrawMapCylinder()
+{
+    Map* pActiveMap = mpAtlas->GetCurrentMap();
+    const vector<MapCylinder*> &vpMCys = pActiveMap->GetAllCylinders();
+    if(vpMCys.empty())
+        return;
+
+    for(size_t i=0; i<vpMCys.size();i++)
+    {
+        MapCylinder* pMCy=vpMCys[i];
+
+        Eigen::Matrix4f Twcy = pMCy->GetTcyw().inverse().matrix();
+        float r = pMCy->GetCyr();
+        // float dstart = pMCy->GetStart();
+        // float dend = pMCy->GetEnd();
+        float dstart = 0.;
+        float dend = 5.;
+        glPushMatrix();
+
+        glMultMatrixf((GLfloat*)Twcy.data());
+        if(pMCy->bActive==1) glColor3f(0.9f, 0.8f, 0.3f);
+        else glColor3f(0.8f, 0.6f, 0.8f);
+        glBegin(GL_LINES);
+        //圆柱侧面
+        for (int ii = 0; ii < 30; ii++) {
+            float theta = 2.0f * 3.1415926f * float(ii) / float(30);//get the current angle
+            float x = r * cosf(theta);//calculate the x component
+            float y = r * sinf(theta);//calculate the y component
+            glVertex3f(x, y, dstart);//output vertex
+            glVertex3f(x, y, dend);//output vertex
+        }
+        glEnd();
+        //圆柱端面
+        glBegin(GL_LINE_LOOP);
+//        if(pMCy->bActive==1) glColor3f(1.0f, 1.0f, 0.5f);
+        for (int ii = 0; ii < 30; ii++) {
+            float theta = 2.0f * 3.1415926f * float(ii) / float(30);//get the current angle
+            float x = r * cosf(theta);//calculate the x component
+            float y = r * sinf(theta);//calculate the y component
+            glVertex3f(x, y, dstart);//output vertex
+        }
+        glEnd();
+        //圆柱端面
+        glBegin(GL_LINE_LOOP);
+//        if(pMCy->bActive==1) glColor3f(1.0f, 1.0f, 0.5f);
+        for (int ii = 0; ii < 30; ii++) {
+            float theta = 2.0f * 3.1415926f * float(ii) / float(30);//get the current angle
+            float x = r * cosf(theta);//calculate the x component
+            float y = r * sinf(theta);//calculate the y component
+            glVertex3f(x, y, dend);//output vertex
+        }
+        glEnd();
+        string txt = std::to_string(pMCy->mnId);
+        string txt2 = txt + "  start  " + std::to_string(r);
+        pangolin::GlFont::I().Text(txt2).Draw(0, -r * 1.1, dstart);
+        txt2 = txt + "  end  " + std::to_string(r);
+        pangolin::GlFont::I().Text(txt2).Draw(0, -r * 1.1, dend);
+        glPopMatrix();
+    }
+}
+
 void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const bool bDrawInertialGraph, const bool bDrawOptLba)
 {
     const float &w = mKeyFrameSize;
@@ -198,36 +259,6 @@ void MapDrawer::DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const b
             KeyFrame* pKF = vpKFs[i];
             Eigen::Matrix4f Twc = pKF->GetPoseInverse().matrix();
             unsigned int index_color = pKF->mnOriginMapId;
-
-            if (pKF->mbCy == 1 && pKF->mnId>2) {
-                    Eigen::Matrix4f Twcy = pKF->mTwcy.matrix();
-                    double r = pKF->mdCyR;
-                    glPushMatrix();
-
-                    glMultMatrixf((GLfloat*) Twcy.data());
-                    glBegin(GL_LINE_LOOP);
-                    glColor3f(0.5f, 0.0f, 0.5f);
-                    for (int ii = 0; ii < 100; ii++) {
-                        float theta = 2.0f * 3.1415926f * float(ii) / float(100);//get the current angle
-                        float x = r * cosf(theta);//calculate the x component
-                        float y = r * sinf(theta);//calculate the y component
-                        glVertex3f(x, y, 0);//output vertex
-                    }
-                    glEnd();
-
-                    glLineWidth(mGraphLineWidth);
-                    glColor3f(0.5f, 0.0f, 0.5f);
-                    glBegin(GL_LINES);
-                    glVertex3f(0, 0, 0);
-                    glVertex3f(0, 0, 0.25);
-                    glEnd();
-
-                    string txt = std::to_string(pKF->mnId);
-                    txt = txt + "    " + std::to_string(pKF->mnFrameId);
-                    pangolin::GlFont::I().Text(txt).Draw(0, -r * 1.1, 0);
-
-                    glPopMatrix();
-                }
 
             glPushMatrix();
 

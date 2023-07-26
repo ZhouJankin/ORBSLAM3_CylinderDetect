@@ -28,7 +28,6 @@
 #include "Frame.h"
 #include "KeyFrameDatabase.h"
 #include "ImuTypes.h"
-#include "MapCylinder.h"
 
 #include "GeometricCamera.h"
 #include "SerializationUtils.h"
@@ -313,8 +312,6 @@ public:
 public:
     //TODO variables for Cylinder detection
     bool mbCy;
-    double mdCyR;
-    Sophus::SE3f mTwcy;
 
     static long unsigned int nNextId;
     long unsigned int mnId;

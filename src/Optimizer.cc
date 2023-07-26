@@ -47,15 +47,15 @@
 namespace ORB_SLAM3
 {
     //BUG
-    vector<double> tmp = {-0.1, -0.1, 3.0, -0.24, 0.57};
-    Optimizer::CylinderIntrinsics Optimizer::mCyVar(tmp);
+    // vector<double> tmp = {-0.1, -0.1, 3.0, -0.24, 0.57};
+    // Optimizer::CylinderIntrinsics Optimizer::mCyVar(tmp);
     // Optimizer::mCyVar.rotation = Sophus::SO3d::exp(Eigen::Vector3d(0.1,0.1,3.0));
     // Optimizer::mCyVar.qx = -2.0;
     // Optimizer::mCyVar.r = 1.0;
     bool Optimizer::mbCyVar = 0;
-    std::set<MapPoint*> Optimizer::msUsedPoints;
+    // std::set<MapPoint*> Optimizer::msUsedPoints;
     std::list<MapPoint*> Optimizer::mlLastLocalBAPoints;
-    std::vector<Eigen::Vector3d> Optimizer::mvLandMarks;
+    // std::vector<Eigen::Vector3d> Optimizer::mvLandMarks;
 
 bool sortByVal(const pair<MapPoint*, int> &a, const pair<MapPoint*, int> &b)
 {
@@ -1510,29 +1510,53 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     pMap->IncreaseChangeIndex();
 
     //TODO 开始Pipeline 改动 *****************************************************************************************
-    //方案一：没有用退出局部BA的地图点，而是用了当前刚优化完的地图点
-    for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++) {
-        MapPoint* pMP = *lit;
-        if(msUsedPoints.count(pMP)) {
-            continue;
-        }
-        msUsedPoints.insert(pMP);
-        Eigen::Vector3d LandMark = pMP->GetWorldPos().cast<double>();
-        mvLandMarks.emplace_back(LandMark);
+    std::cout<<"DEBUG IN OPTIMIZER"<<std::endl;
+    //准备开始优化，有足够关键帧才开始检查圆柱
+    // if(pMap->GetAllKeyFrames().size() < 21) return;
+    //准备开始优化，查询当前是否有已激活圆柱
+    if(pMap->GetCurCylinder() == NULL) std::cout<<"开始优化，检查当前圆柱为空"<<std::endl;
+    if(pMap->GetCurCylinder() != NULL && pMap->GetCurCylinder()->bActive) {
+        std::cout<<"DEBUG IN OPTIMIZER 1"<<std::endl;
+        return;
     }
+    //没有圆柱则创建圆柱并开始圆柱循环迭代
+    std::cout<<"DEBUG IN OPTIMIZER 2"<<std::endl;
+    vector<KeyFrame*> vpNeighKFs = pKF->GetBestCovisibilityKeyFrames(15);
+    std::cout<<"DEBUG IN OPTIMIZER 3"<<std::endl;
+    MapCylinder* pCy =  pMap->GetCandidateCylinder(pKF);
+    std::cout<<"DEBUG IN OPTIMIZER 4"<<std::endl;
+    //pCy->cyPreparation(vpNeighKFs);
+    std::cout<<"DEBUG IN OPTIMIZER 5"<<std::endl;
+    pCy->SetWorldMat();
+    std::cout<<"DEBUG IN OPTIMIZER 6"<<std::endl;
+
+    
+    
+    
+
+    //方案一：没有用退出局部BA的地图点，而是用了当前刚优化完的地图点
+    // for(list<MapPoint*>::iterator lit=lLocalMapPoints.begin(), lend=lLocalMapPoints.end(); lit!=lend; lit++) {
+    //     MapPoint* pMP = *lit;
+    //     if(msUsedPoints.count(pMP)) {
+    //         continue;
+    //     }
+    //     msUsedPoints.insert(pMP);
+    //     Eigen::Vector3d LandMark = pMP->GetWorldPos().cast<double>();
+    //     mvLandMarks.emplace_back(LandMark);
+    // }
 
     //方案二 第一帧用List存储当前LocalBA用的所有地图点，第二帧查找这些地图点是否被使用，如果没有被使用则认为退出了局部优化
-    // for(list<MapPoint*>::iterator lit=mlLastLocalBAPoints.begin(), lend=mlLastLocalBAPoints.end(); lit!=lend; lit++) {
-    //     MapPoint* pMP = *lit;
-    //     if(!pMP->isBad() && pMP->GetMap() == pCurrentMap && pMP->mnBALocalForKF != pKF->mnId  && pMP->GetObservations().size() >= 3) {
-    //         Eigen::Vector3d LandMark = pMP->GetWorldPos().cast<double>();
-    //         mvLandMarks.emplace_back(LandMark);
-    //     }
-    // }
-    // std::cout<<"debug before Optimize; mlLastLocalBAPoints size: "<<mlLastLocalBAPoints.size()<<"landmark size: "<<mvLandMarks.size()<<std::endl;
+    for(list<MapPoint*>::iterator lit=mlLastLocalBAPoints.begin(), lend=mlLastLocalBAPoints.end(); lit!=lend; lit++) {
+        MapPoint* pMP = *lit;
+        if(!pMP->isBad() && pMP->GetMap() == pCurrentMap && pMP->mnBALocalForKF != pKF->mnId  && pMP->GetObservations().size() >= 3) {
+            //Eigen::Vector3d LandMark = pMP->GetWorldPos().cast<double>();
+            pCy->mlpPastMapPoints.emplace_back(pMP);
+        }
+    }
+    std::cout<<"debug before Optimize; mlLastLocalBAPoints size: "<<mlLastLocalBAPoints.size()<<"mlpPastMapPoints size: "<<pCy->mlpPastMapPoints.size()<<std::endl;
 
-    // mlLastLocalBAPoints.clear();
-    // mlLastLocalBAPoints = lLocalMapPoints;
+    mlLastLocalBAPoints.clear();
+    mlLastLocalBAPoints = lLocalMapPoints;
 
     // //方案三 用Map中的地图点
     // const vector<MapPoint*> &vpMPs = pMap->GetAllMapPoints();
@@ -1548,35 +1572,42 @@ void Optimizer::LocalBundleAdjustment(KeyFrame *pKF, bool* pbStopFlag, Map* pMap
     // }
     // std::cout<<"debug before Optimize; vpMPs size: "<<vpMPs.size()<<"landmark size: "<<mvLandMarks.size()<<std::endl;
     
-    if(mvLandMarks.size() > 300) {
+    if(pCy->mlpPastMapPoints.size() > 300) {
         std::cout<<"当前关键帧id"<<pKF->mnId<<std::endl;
-        Optimizer::mCyVar.rotation = Sophus::SO3d::exp(Eigen::Vector3d(0.1,0.1,3.0));
-        Optimizer::mCyVar.qx = -0.24;
-        Optimizer::mCyVar.r = 0.57;
-        Optimizer::mbCyVar = LoopOptimization(mvLandMarks, Optimizer::mCyVar);
+        // Optimizer::mCyVar.rotation = Sophus::SO3d::exp(Eigen::Vector3d(0.1,0.1,3.0));
+        // Optimizer::mCyVar.qx = -0.24;
+        // Optimizer::mCyVar.r = 0.57;
+        Optimizer::mbCyVar = LoopOptimization(pCy->mlpPastMapPoints, pCy);
         pKF->mbCy = Optimizer::mbCyVar;
 
 
         if(pKF->mbCy) {
             std::cout<<"循环优化成功"<<std::endl;
-            auto param = Optimizer::mCyVar;
-            pKF->mdCyR = param.r;
-            std::cout<<"当前关键帧圆柱半径:"<<param.r<<std::endl;
-
-            //计算当前圆柱Twcy：注意要把关键帧的平移考虑进去
-            Sophus::SE3f Twc = pKF->GetPoseInverse();
-            Eigen::Vector3f twc = Twc.translation();
-            Eigen::Matrix3d Rcyw = param.rotation.matrix();
-            Eigen::Vector3d twcy = -Rcyw.transpose() * Eigen::Vector3d(param.qx, 0., 0.);
-            Sophus::SE3f Twcy(Rcyw.transpose().cast<float>(), twcy.cast<float>() + twc);
-            pKF->mTwcy = Twcy;
+            pKF->AddMapCylinder(pCy);
+            std::cout<<"当前关键帧圆柱半径:"<<pCy->GetCyr()<<std::endl;
+            pCy->AddCylindricalKF(pKF);
             //循环优化成功，清除所有地图点
-            mvLandMarks.clear();
+            pCy->mlpCyMapPoints = pCy->mlpPastMapPoints;
+            pCy->mlpPastMapPoints.clear();
+            pCy->mnBALocalForKF = pKF->mnId;
+            pCy->SetWorldMat();     //更新T， P
+            pCy->bActive = true;
+            pCy->bBuilt = true;
+            pMap->AddMapCylinder(pCy);
+            //TODO计算地图点起点终点
+
+            
+            
         }
         else{
             std::cout<<"循环优化失败"<<std::endl;
             //循环优化失败，清除一半地图点
-            mvLandMarks.erase(mvLandMarks.begin(), mvLandMarks.begin()+ mvLandMarks.size()/2);
+            int sz = pCy->mlpPastMapPoints.size();
+            auto it_end = std::next(pCy->mlpPastMapPoints.begin(), sz/2);
+            pCy->mlpPastMapPoints.erase(pCy->mlpPastMapPoints.begin(), it_end);
+            pCy->bActive = false;
+            pCy->bBuilt = true;
+            //mvLandMarks.erase(mvLandMarks.begin(), mvLandMarks.begin()+ mvLandMarks.size()/2);
         }
 
     }
@@ -1664,7 +1695,7 @@ void Optimizer::OptimizeOnce(std::vector<Eigen::Vector3d> &noisyLandmarks, std::
     abc.r = v->estimate().r;
 }
 
-std::vector<double> Optimizer::computeDistance(const std::vector<Eigen::Vector3d> &noisyLandmarks, CylinderIntrinsics abc) {
+std::vector<double> Optimizer::computeDistance(const std::vector<Eigen::Vector3d> &noisyLandmarks, const CylinderIntrinsics &abc) {
     int size = noisyLandmarks.size();
     std::vector<double> dists;
     Eigen::Matrix3d A;
@@ -1679,6 +1710,8 @@ std::vector<double> Optimizer::computeDistance(const std::vector<Eigen::Vector3d
 
 //仅计算内点的均值
 double Optimizer::computeMean(const std::vector<double> &dists, const std::vector<bool> &isOuter, int InnerNum) {
+    std::cout<<"debug in cumputMean:"<< (dists.size() == isOuter.size()) <<std::endl;
+    std::cout<<"debug in cumputMean2 :"<< (dists.size() == InnerNum) <<std::endl;
     double sum = 0;
     for(int i = 0; i < dists.size(); ++i) {
         // if(isOuter[i]) {
@@ -1700,25 +1733,33 @@ double Optimizer::computeStdDev(const std::vector<double> &dists, double mean, c
     return sqrt(accum) / InnerNum;
 }
 
-bool Optimizer::LoopOptimization(std::vector<Eigen::Vector3d> &noisyLandmarks, CylinderIntrinsics &abc) {
+bool Optimizer::LoopOptimization(std::list<MapPoint*> &lpPastMapPoints, MapCylinder* pCy) {
     int iteration = 0;
     //设置部分参数
-    double sigma_threshold = 0.025;
+    double sigma_threshold = 0.005;
     double sigma;
     int inner_num_threshold = 5;   //内点数量阈值，若小于该阈值判断没有圆柱环境
     int iteration_threshold = 50;
     double r_threshold = 5.;
-    
+
+    int sz = lpPastMapPoints.size();
+    std::vector<Eigen::Vector3d> noisyLandmarks;
+    //turn lpPastMapPoints to  -> noisyLandmarks;
+    for(auto it = lpPastMapPoints.begin(); it != lpPastMapPoints.end(); it++) {
+        MapPoint * p = *it;
+        noisyLandmarks.push_back(p->GetWorldPos().cast<double>());
+    }
+
     int size = noisyLandmarks.size();
     int last_inner_size = size;
 
     std::vector<bool> isOuter(size,  false);
-    CylinderIntrinsics cur_abc = abc;
+    CylinderIntrinsics cur_abc(pCy->GetSO3Para(), pCy->GetQx(), pCy->GetCyr());
     do {
         iteration++;
         OptimizeOnce(noisyLandmarks, isOuter, cur_abc);
         std::cout<<"第"<<iteration<<"次优化后结果："<<std::endl;
-        std::cout<<cur_abc.rotation.log()<<std::endl;
+        std::cout<<cur_abc.rotation.matrix()<<std::endl;
         std::cout<< cur_abc.qx<<' '<< cur_abc.r<<std::endl;
         
         //这里应该计算的是所有点的距离dists, 内点的mean std
@@ -1756,7 +1797,7 @@ bool Optimizer::LoopOptimization(std::vector<Eigen::Vector3d> &noisyLandmarks, C
             return false;
         }
 
-        if(cur_abc.r > r_threshold) {
+        if(pCy->GetCyr() > r_threshold) {
             std::cout<<"第 "<<iteration<<"轮迭代，估计的圆柱半径过大"<<std::endl;
             return false;
         }
@@ -1776,8 +1817,21 @@ bool Optimizer::LoopOptimization(std::vector<Eigen::Vector3d> &noisyLandmarks, C
     while(sigma > sigma_threshold);
 
     //若内点数量大于80%则认为估计成功
-    if( 1. * last_inner_size/size > 0.1) {
-        abc = cur_abc;
+    if( 1. * last_inner_size/size > 0.5) {
+        pCy->SetWorldPara(cur_abc.rotation, cur_abc.qx, cur_abc.r);
+        //删除外点
+        int cnt =0;
+        int i = 0;
+        for(auto it = lpPastMapPoints.begin(); i < size && it != lpPastMapPoints.end(); ) {
+            if(isOuter[i] == true) {
+                it = lpPastMapPoints.erase(it);
+                i++;
+            }
+            else{
+                i++;
+                it++;
+            } 
+        }
         return true;
     }
     return false;

@@ -42,7 +42,7 @@ public:
     void newParameterLoader(Settings* settings);
 
     Atlas* mpAtlas;
-
+    void DrawMapCylinder();
     void DrawMapPoints();
     void DrawKeyFrames(const bool bDrawKF, const bool bDrawGraph, const bool bDrawInertialGraph, const bool bDrawOptLba);
     void DrawCurrentCamera(pangolin::OpenGlMatrix &Twc);

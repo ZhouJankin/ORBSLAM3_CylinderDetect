@@ -64,9 +64,8 @@ src/FrameDrawer.cc
 src/Converter.cc
 src/MapPoint.cc
 src/KeyFrame.cc
-src/Atlas.cc
 src/Map.cc
-src/MapCylinder.cc
+src/Atlas.cc
 src/MapDrawer.cc
 src/Optimizer.cc
 src/Frame.cc
@@ -83,6 +82,7 @@ src/GeometricTools.cc
 src/TwoViewReconstruction.cc
 src/Config.cc
 src/Settings.cc
+src/MapCylinder.cc
 include/System.h
 include/Tracking.h
 include/LocalMapping.h
@@ -95,7 +95,6 @@ include/MapPoint.h
 include/KeyFrame.h
 include/Atlas.h
 include/Map.h
-include/MapCylinder.h
 include/MapDrawer.h
 include/Optimizer.h
 include/Frame.h
@@ -113,7 +112,9 @@ include/GeometricTools.h
 include/TwoViewReconstruction.h
 include/SerializationUtils.h
 include/Config.h
-include/Settings.h)
+include/Settings.h
+include/MapCylinder.h
+)
 
 add_subdirectory(Thirdparty/g2o)
 
